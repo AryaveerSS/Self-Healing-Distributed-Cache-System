@@ -34,13 +34,14 @@ logger = logging.getLogger(__name__)
 async def heartbeat(payload: HeartbeatPayload) -> dict:
     """
     Receive heartbeat from a cache node.
-    Auto-registers the node if not yet known.
+    Auto-registers the node if not yet known, or updates host/port if node restarted.
     """
     if not cluster_manager:
         raise HTTPException(status_code=503, detail="Cluster manager not initialized")
 
-    # Auto-register unknown nodes — C++ nodes don't call /register explicitly
+    # Check if node exists
     if payload.node_id not in cluster_manager.nodes:
+        # New node — register it
         cluster_manager.register_node(
             node_id=payload.node_id,
             host=payload.host,
@@ -48,7 +49,17 @@ async def heartbeat(payload: HeartbeatPayload) -> dict:
             zone=payload.zone,
             cache_capacity=payload.cache_capacity,
         )
-        logger.info(f"Auto-registered node {payload.node_id} via heartbeat")
+        logger.info(f"Auto-registered new node {payload.node_id} via heartbeat")
+    else:
+        # Existing node — update host/port in case it restarted with new IP
+        node = cluster_manager.nodes[payload.node_id]
+        if node.host != payload.host or node.port != payload.port:
+            logger.info(
+                f"Node {payload.node_id} restarted: "
+                f"{node.host}:{node.port} → {payload.host}:{payload.port}"
+            )
+            node.host = payload.host
+            node.port = payload.port
 
     cluster_manager.process_heartbeat(
         node_id=payload.node_id,
